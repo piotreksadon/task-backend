@@ -12,38 +12,34 @@ export enum TaskStatusEnum {
 @Injectable()
 export class TasksService {
   private readonly tasksByUser: Map<string, Task[]> = new Map();
-  private readonly userCreationTimestamps: Map<string, Date[]> = new Map();
-  private globalCreationTimestamps: Date[] = [];
 
-  private readonly USER_RATE_LIMIT = Number(process.env.USER_RATE_LIMIT);
-  private readonly USER_RATE_LIMIT_WINDOW_MS = Number(process.env.USER_RATE_LIMIT_WINDOW_MS);
+  createTaskInternal(createTaskDto: CreateTaskDto, createdAt: Date): Task {
+    const { userId, description, startTime, endTime } = createTaskDto;
 
-  private readonly GLOBAL_RATE_LIMIT = Number(process.env.GLOBAL_RATE_LIMIT);
-  private readonly GLOBAL_RATE_LIMIT_WINDOW_MS = Number(process.env.GLOBAL_RATE_LIMIT_WINDOW_MS)
+    const userTasks = this.tasksByUser.get(userId) || [];
 
-  create(createTaskDto: CreateTaskDto): Task {
-    const { userId, description } = createTaskDto;
-    const now = new Date();
-
-    this.checkUserRateLimit(userId, now);
-    this.checkGlobalRateLimit(now);
+    if (this.checkTimeCollision(userId, startTime, endTime)) {
+      console.warn(`Time collision detected for user ${userId}.`);
+      throw new HttpException(
+          'New task time range overlaps with existing tasks.',
+          HttpStatus.CONFLICT,
+      );
+    }
 
     const newTask: Task = {
       id: uuidv4(),
       userId,
       description,
       isDone: false,
-      createdAt: now,
+      createdAt,
+      startTime,
+      endTime,
     };
 
-    const userTasks = this.tasksByUser.get(userId) || [];
     userTasks.push(newTask);
     this.tasksByUser.set(userId, userTasks);
 
-    this.recordUserTimestamp(userId, now);
-    this.recordGlobalTimestamp(now);
-
-    console.info(`Task created: ${newTask.id} for user ${userId}`);
+    console.info(`Task created: ${newTask.id} for user ${userId} from ${startTime} to ${endTime}`);
     return newTask;
   }
 
@@ -98,48 +94,10 @@ export class TasksService {
     return updatedTask;
   }
 
-  private checkUserRateLimit(userId: string, now: Date): void {
-    const timestamps = this.userCreationTimestamps.get(userId) || [];
-    const relevantTimestamps = timestamps.filter(
-        ts => now.getTime() - ts.getTime() < this.USER_RATE_LIMIT_WINDOW_MS,
-    );
-
-    this.userCreationTimestamps.set(userId, relevantTimestamps);
-
-    console.info(`User ${userId} has ${relevantTimestamps.length} recent tasks.`);
-
-    if (relevantTimestamps.length >= this.USER_RATE_LIMIT) {
-      console.warn(`User ${userId} exceeded rate limit.`);
-      throw new HttpException(
-          `User rate limit exceeded. Max ${this.USER_RATE_LIMIT} tasks per ${this.USER_RATE_LIMIT_WINDOW_MS / 1000} seconds per user.`,
-          HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-  }
-
-  private recordUserTimestamp(userId: string, timestamp: Date): void {
-    const timestamps = this.userCreationTimestamps.get(userId) || [];
-    timestamps.push(timestamp);
-    this.userCreationTimestamps.set(userId, timestamps);
-  }
-
-  private checkGlobalRateLimit(now: Date): void {
-    this.globalCreationTimestamps = this.globalCreationTimestamps.filter(
-        ts => now.getTime() - ts.getTime() < this.GLOBAL_RATE_LIMIT_WINDOW_MS,
-    );
-
-    console.log(`Global tasks in last 5 mins: ${this.globalCreationTimestamps.length}`);
-
-    if (this.globalCreationTimestamps.length >= this.GLOBAL_RATE_LIMIT) {
-      console.warn(`Global rate limit exceeded.`);
-      throw new HttpException(
-          `Global rate limit exceeded. Max ${this.GLOBAL_RATE_LIMIT} tasks per ${this.GLOBAL_RATE_LIMIT_WINDOW_MS / 1000} seconds.`,
-          HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
-  }
-
-  private recordGlobalTimestamp(timestamp: Date): void {
-    this.globalCreationTimestamps.push(timestamp);
+  private checkTimeCollision(userId: string, newStartTime: Date, newEndTime: Date): boolean {
+    const userTasks = this.tasksByUser.get(userId) || [];
+    return userTasks.some(task => {
+      return (newStartTime < task.endTime && task.startTime < newEndTime);
+    });
   }
 }

@@ -23,70 +23,99 @@ describe('TasksService', () => {
       providers: [TasksService],
     }).compile();
     service = module.get<TasksService>(TasksService);
-    // Clear the internal data structures before each test
     (service as any).tasksByUser = new Map();
-    (service as any).userCreationTimestamps = new Map();
-    (service as any).globalCreationTimestamps = [];
   });
 
   it('should be defined', () => {
     expect(service).toBeDefined();
   });
 
-  describe('create', () => {
-    it('should create a new task', () => {
-      const createTaskDto: CreateTaskDto = {userId: 'user123', description: 'Test Task'};
+  describe('createTaskInternal', () => {
+    it('should create a new task with start and end times', () => {
       const now = new Date();
+      const startTime = new Date(now.getTime() + 1000);
+      const endTime = new Date(now.getTime() + 2000);
+      const createTaskDto: CreateTaskDto = {
+        userId: 'user123',
+        description: 'Test Task',
+        startTime,
+        endTime,
+      };
       (uuidv4 as jest.Mock).mockReturnValue('new-task-id');
 
-      const newTask = service.create(createTaskDto);
+      const newTask = service.createTaskInternal(createTaskDto, now);
 
       expect(newTask.id).toBe('new-task-id');
       expect(newTask.userId).toBe('user123');
       expect(newTask.description).toBe('Test Task');
       expect(newTask.isDone).toBe(false);
       expect(newTask.createdAt).toEqual(now);
+      expect(newTask.startTime).toEqual(startTime);
+      expect(newTask.endTime).toEqual(endTime);
       expect((service as any).tasksByUser.get('user123')).toEqual([newTask]);
     });
 
-    it('should apply user rate limit', () => {
-      const createTaskDto: CreateTaskDto = {userId: 'user123', description: 'Test Task'};
-      const userRateLimit = 5;
+    it('should throw ConflictException if time collision exists', () => {
+      const now = new Date();
+      const startTime1 = new Date(now.getTime() + 1000);
+      const endTime1 = new Date(now.getTime() + 2000);
+      const existingTask = {
+        id: 'existing-id',
+        userId: 'user123',
+        description: 'Existing Task',
+        isDone: false,
+        createdAt: now,
+        startTime: startTime1,
+        endTime: endTime1,
+      };
+      (service as any).tasksByUser.set('user123', [existingTask]);
 
-      for (let i = 0; i < userRateLimit + 1; i++) {
-        try {
-          service.create(createTaskDto);
-        } catch (e) {
-          expect(e).toBeInstanceOf(HttpException);
-          expect(e.message).toBe('User rate limit exceeded. Max 5 tasks per 60 seconds per user.');
-          expect(e.getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
-        }
-      }
+      const startTime2 = new Date(now.getTime() + 1500);
+      const endTime2 = new Date(now.getTime() + 2500);
+      const createTaskDto: CreateTaskDto = {
+        userId: 'user123',
+        description: 'Conflicting Task',
+        startTime: startTime2,
+        endTime: endTime2,
+      };
+
+      expect(() => service.createTaskInternal(createTaskDto, new Date())).toThrowError(HttpException);
+      expect(() => service.createTaskInternal(createTaskDto, new Date())).toThrowError('New task time range overlaps with existing tasks.');
     });
 
-    it('should apply global rate limit', async () => {
-      const globalRateLimit = parseInt(process.env.GLOBAL_RATE_LIMIT || '0', 10);
-      const users = ['user1', 'user2', 'user3', 'user4', 'user5'];
+    it('should not throw ConflictException if no time collision exists', () => {
+      const now = new Date();
+      const startTime1 = new Date(now.getTime() + 1000);
+      const endTime1 = new Date(now.getTime() + 2000);
+      const existingTask = {
+        id: 'existing-id',
+        userId: 'user123',
+        description: 'Existing Task',
+        isDone: false,
+        createdAt: now,
+        startTime: startTime1,
+        endTime: endTime1,
+      };
+      (service as any).tasksByUser.set('user123', [existingTask]);
 
-      for (let i = 0; i < globalRateLimit + 1; i++) {
-        try {
-          const userId = users[i % users.length];
-          const createTaskDto = {userId, description: `Task ${i + 1} for ${userId}`};
-          service.create(createTaskDto);
+      const startTime2 = new Date(now.getTime() + 3000);
+      const endTime2 = new Date(now.getTime() + 4000);
+      const createTaskDto: CreateTaskDto = {
+        userId: 'user123',
+        description: 'Non-conflicting Task',
+        startTime: startTime2,
+        endTime: endTime2,
+      };
 
-        } catch (error) {
-          expect(error).toBeInstanceOf(HttpException);
-          expect(error.message).toBe(`Global rate limit exceeded. Max ${globalRateLimit} tasks per 300 seconds.`);
-          expect(error.getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
-        }
-      }
+      expect(() => service.createTaskInternal(createTaskDto, new Date())).not.toThrowError();
     });
   });
 
   describe('findAll', () => {
     it('should return all tasks when no status is provided', () => {
-      const task1 = { id: '1', userId: 'user1', description: 'Task 1', isDone: false, createdAt: new Date() };
-      const task2 = { id: '2', userId: 'user2', description: 'Task 2', isDone: true, createdAt: new Date() };
+      const now = new Date();
+      const task1 = { id: '1', userId: 'user1', description: 'Task 1', isDone: false, createdAt: now, startTime: now, endTime: now };
+      const task2 = { id: '2', userId: 'user2', description: 'Task 2', isDone: true, createdAt: now, startTime: now, endTime: now };
       (service as any).tasksByUser = new Map([
         ['user1', [task1]],
         ['user2', [task2]],
@@ -98,8 +127,9 @@ describe('TasksService', () => {
     });
 
     it('should return tasks filtered by status', () => {
-      const task1 = { id: '1', userId: 'user1', description: 'Task 1', isDone: false, createdAt: new Date() };
-      const task2 = { id: '2', userId: 'user2', description: 'Task 2', isDone: true, createdAt: new Date() };
+      const now = new Date();
+      const task1 = { id: '1', userId: 'user1', description: 'Task 1', isDone: false, createdAt: now, startTime: now, endTime: now };
+      const task2 = { id: '2', userId: 'user2', description: 'Task 2', isDone: true, createdAt: now, startTime: now, endTime: now };
       (service as any).tasksByUser = new Map([
         ['user1', [task1]],
         ['user2', [task2]],
@@ -115,9 +145,10 @@ describe('TasksService', () => {
 
   describe('findByUser', () => {
     it('should return tasks for a specific user', () => {
-      const task1 = {id: '1', userId: 'user1', description: 'Task 1', isDone: false, createdAt: new Date()};
-      const task2 = {id: '2', userId: 'user1', description: 'Task 2', isDone: true, createdAt: new Date()};
-      const task3 = {id: '3', userId: 'user2', description: 'Task 3', isDone: false, createdAt: new Date()};
+      const now = new Date();
+      const task1 = { id: '1', userId: 'user1', description: 'Task 1', isDone: false, createdAt: now, startTime: now, endTime: now };
+      const task2 = { id: '2', userId: 'user1', description: 'Task 2', isDone: true, createdAt: now, startTime: now, endTime: now };
+      const task3 = { id: '3', userId: 'user2', description: 'Task 3', isDone: false, createdAt: now, startTime: now, endTime: now };
       (service as any).tasksByUser = new Map([
         ['user1', [task1, task2]],
         ['user2', [task3]],
@@ -129,8 +160,9 @@ describe('TasksService', () => {
     });
 
     it('should return tasks for a user filtered by status', () => {
-      const task1 = {id: '1', userId: 'user1', description: 'Task 1', isDone: false, createdAt: new Date()};
-      const task2 = {id: '2', userId: 'user1', description: 'Task 2', isDone: true, createdAt: new Date()};
+      const now = new Date();
+      const task1 = { id: '1', userId: 'user1', description: 'Task 1', isDone: false, createdAt: now, startTime: now, endTime: now };
+      const task2 = { id: '2', userId: 'user1', description: 'Task 2', isDone: true, createdAt: now, startTime: now, endTime: now };
       (service as any).tasksByUser = new Map([
         ['user1', [task1, task2]],
       ]);
@@ -147,41 +179,41 @@ describe('TasksService', () => {
       const result = service.findByUser('nonexistent-user');
       expect(result).toEqual([]);
     });
-  })
+  });
 
-    describe('markAsDone', () => {
-      it('should mark a task as done', () => {
-        const now = new Date();
-        const task1 = {id: '1', userId: 'user1', description: 'Task 1', isDone: false, createdAt: now};
-        (service as any).tasksByUser = new Map([['user1', [task1]]]);
+  describe('markAsDone', () => {
+    it('should mark a task as done', () => {
+      const now = new Date();
+      const task1 = { id: '1', userId: 'user1', description: 'Task 1', isDone: false, createdAt: now, startTime: now, endTime: now };
+      (service as any).tasksByUser = new Map([['user1', [task1]]]);
 
-        const updatedTask = service.markAsDone('1', 'user1');
+      const updatedTask = service.markAsDone('1', 'user1');
 
-        expect(updatedTask.isDone).toBe(true);
-        expect(updatedTask.completedAt).toBeInstanceOf(Date);
-        expect((service as any).tasksByUser.get('user1')[0]).toEqual(updatedTask);
-      });
-
-      it('should return the task if it is already done', () => {
-        const now = new Date();
-        const task1 = {id: '1', userId: 'user1', description: 'Task 1', isDone: true, createdAt: now, completedAt: now};
-        (service as any).tasksByUser = new Map([['user1', [task1]]]);
-        const result = service.markAsDone('1', 'user1');
-        expect(result).toEqual(task1);
-      });
-
-      it('should throw NotFoundException if user has no tasks', () => {
-        (service as any).tasksByUser = new Map();
-        expect(() => service.markAsDone('1', 'nonexistent-user')).toThrowError(NotFoundException);
-        expect(() => service.markAsDone('1', 'nonexistent-user')).toThrowError('Tasks not found for user nonexistent-user');
-      });
-
-      it('should throw NotFoundException if task is not found for the user', () => {
-        const now = new Date();
-        const task1 = {id: '1', userId: 'user1', description: 'Task 1', isDone: false, createdAt: now};
-        (service as any).tasksByUser = new Map([['user1', [task1]]]);
-        expect(() => service.markAsDone('nonexistent-task', 'user1')).toThrowError(NotFoundException);
-        expect(() => service.markAsDone('nonexistent-task', 'user1')).toThrowError('Task with ID nonexistent-task not found for user user1');
-      });
+      expect(updatedTask.isDone).toBe(true);
+      expect(updatedTask.completedAt).toBeInstanceOf(Date);
+      expect((service as any).tasksByUser.get('user1')[0]).toEqual(updatedTask);
     });
+
+    it('should return the task if it is already done', () => {
+      const now = new Date();
+      const task1 = { id: '1', userId: 'user1', description: 'Task 1', isDone: true, createdAt: now, completedAt: now, startTime: now, endTime: now };
+      (service as any).tasksByUser = new Map([['user1', [task1]]]);
+      const result = service.markAsDone('1', 'user1');
+      expect(result).toEqual(task1);
+    });
+
+    it('should throw NotFoundException if user has no tasks', () => {
+      (service as any).tasksByUser = new Map();
+      expect(() => service.markAsDone('1', 'nonexistent-user')).toThrowError(NotFoundException);
+      expect(() => service.markAsDone('1', 'nonexistent-user')).toThrowError('Tasks not found for user nonexistent-user');
+    });
+
+    it('should throw NotFoundException if task is not found for the user', () => {
+      const now = new Date();
+      const task1 = { id: '1', userId: 'user1', description: 'Task 1', isDone: false, createdAt: now, startTime: now, endTime: now };
+      (service as any).tasksByUser = new Map([['user1', [task1]]]);
+      expect(() => service.markAsDone('nonexistent-task', 'user1')).toThrowError(NotFoundException);
+      expect(() => service.markAsDone('nonexistent-task', 'user1')).toThrowError('Task with ID nonexistent-task not found for user user1');
+    });
+  });
 });

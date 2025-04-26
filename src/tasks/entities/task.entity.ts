@@ -5,4 +5,6 @@ export interface Task {
     isDone: boolean;
     createdAt: Date;
     completedAt?: Date;
+    startTime: Date;
+    endTime: Date;
 }

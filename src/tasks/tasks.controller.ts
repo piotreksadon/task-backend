@@ -1,8 +1,9 @@
-import { Controller, Get, Post, Body, Param, Patch, Query, ParseUUIDPipe, ValidationPipe, UsePipes, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Patch, Query, ParseUUIDPipe, ValidationPipe, UsePipes, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiCreatedResponse, ApiOkResponse, ApiBadRequestResponse, ApiNotFoundResponse, ApiQuery, ApiParam, ApiOperation } from '@nestjs/swagger';
 import { TasksService, TaskStatusEnum } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { Task } from './entities/task.entity';
+import {TaskRateLimitGuard} from "./guards/task-rate-limit.guard";
 
 @ApiTags('Tasks')
 @Controller('tasks')
@@ -16,10 +17,12 @@ export class TasksController {
     //type: TaskModel, // I had to comment this swagger property, because the interface cant be assigned as type. In real life it would be an entity class.
   })
   @ApiBadRequestResponse({ description: 'Invalid input data.' })
+  @UseGuards(TaskRateLimitGuard)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   @HttpCode(HttpStatus.CREATED)
   create(@Body() createTaskDto: CreateTaskDto): Task {
-    return this.tasksService.create(createTaskDto);
+    const now = new Date();
+    return this.tasksService.createTaskInternal(createTaskDto, now);
   }
 
   @Get()
@@ -65,7 +68,7 @@ export class TasksController {
   @ApiNotFoundResponse({ description: 'User not found' })
   findByUser(
       @Param('userId') userId: string,
-      @Query('status') status?: TaskStatusEnum
+      @Query('status') status?: TaskStatusEnum,
   ): Task[] {
     const validStatuses = [TaskStatusEnum.DONE, TaskStatusEnum.OPEN];
     if (status && !validStatuses.includes(status)) {
@@ -96,9 +99,8 @@ export class TasksController {
   @ApiNotFoundResponse({ description: 'Task or user not found' })
   markAsDone(
       @Param('taskId', ParseUUIDPipe) taskId: string,
-      @Param('userId') userId: string
+      @Param('userId') userId: string,
   ): Task {
     return this.tasksService.markAsDone(taskId, userId);
   }
 }
-

@@ -2,6 +2,10 @@
 
 Simple API for managing tasks, built with NestJS and TypeScript.
 
+## Swagger
+
+To view the API documentation, navigate to `http://localhost:3000/api` after starting the server. The Swagger UI provides an interactive interface for testing the API endpoints.
+
 ## Features
 
 * Creating tasks for users.

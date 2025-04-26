@@ -1,0 +1,27 @@
+version: '3.8'
+services:
+  task-backend-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_PORT: ${APP_PORT}
+        USER_RATE_LIMIT: ${USER_RATE_LIMIT}
+        USER_RATE_LIMIT_WINDOW_MS: ${USER_RATE_LIMIT_WINDOW_MS}
+        GLOBAL_RATE_LIMIT: ${GLOBAL_RATE_LIMIT}
+        GLOBAL_RATE_LIMIT_WINDOW_MS: ${GLOBAL_RATE_LIMIT_WINDOW_MS}
+    ports:
+      - "${APP_PORT}:${APP_PORT}"
+    environment:
+      PORT: ${APP_PORT}
+      USER_RATE_LIMIT: ${USER_RATE_LIMIT}
+      USER_RATE_LIMIT_WINDOW_MS: ${USER_RATE_LIMIT_WINDOW_MS}
+      GLOBAL_RATE_LIMIT: ${GLOBAL_RATE_LIMIT}
+      GLOBAL_RATE_LIMIT_WINDOW_MS: ${GLOBAL_RATE_LIMIT_WINDOW_MS}
+      NODE_ENV: production
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:${APP_PORT}/health", "||", "exit", "1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
